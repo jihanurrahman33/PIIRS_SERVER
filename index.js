@@ -60,6 +60,18 @@ async function run() {
     const timelinesCollection = database.collection("timelines");
     const paymentsCollection = database.collection("payments");
 
+    //middleware
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+
+      const query = { email };
+
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
     app.get("/", (req, res) => {
       res.send("server is live");
     });
@@ -68,6 +80,16 @@ async function run() {
     app.get("/users", async (req, res) => {
       const cursor = usersCollection.find();
       const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = {
+        email,
+      };
+      const result = await usersCollection.findOne(query);
+      console.log(result);
+
       res.send(result);
     });
     app.post("/users", async (req, res) => {
@@ -98,6 +120,19 @@ async function run() {
       return res.send({ message: "user Already Exist" });
     });
 
+    app.get(
+      "/users/:role/staffs",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const role = req.params.role;
+        const query = { role };
+        console.log(query);
+        const result = await usersCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
     //issues related API's
     app.get("/issues", async (req, res) => {
       const result = await issuesCollection.find().toArray();
@@ -115,6 +150,8 @@ async function run() {
       issueData.status = "pending";
       issueData.priority = "normal";
       issueData.isBoosted = false;
+      issueData.upvotes = 0;
+      issueData.upvoters = [];
       issueData.createdBy = req.decoded_email;
       issueData.createdAt = new Date();
 
@@ -131,6 +168,95 @@ async function run() {
 
       const result = await issuesCollection.find(query).toArray();
       res.send(result);
+    });
+
+    //upvote on issue
+    app.patch("/issues/:id/upvote", verifyFBToken, async (req, res) => {
+      console.log(">>> upvote called");
+      const issueId = req.params.id;
+      const userEmail = req.decoded_email;
+      console.log("issueId:", issueId, "userEmail:", userEmail);
+
+      // Validate ObjectId
+      let _id;
+      try {
+        _id = new ObjectId(issueId);
+      } catch (err) {
+        console.error("Invalid ObjectId:", issueId, err);
+        return res.status(400).send({ error: "Invalid issue id" });
+      }
+
+      try {
+        // Fetch doc first and log it
+        const doc = await issuesCollection.findOne({ _id });
+        console.log("fetched doc:", doc);
+
+        if (!doc) {
+          console.warn("Issue not found for id:", issueId);
+          return res.status(404).send({ error: "Issue not found" });
+        }
+
+        // normalize and defensive checks
+        const upvoters = Array.isArray(doc.upvoters) ? doc.upvoters : [];
+        const currentUpvotes =
+          typeof doc.upvotes === "number" ? doc.upvotes : 0;
+
+        // log details
+        console.log("upvoters array length:", upvoters.length);
+        // show first few upvoters to inspect format
+        console.log("some upvoters:", upvoters.slice(0, 10));
+        console.log("currentUpvotes:", currentUpvotes);
+
+        // membership test — trim and lowercase to avoid whitespace/case mismatch
+        const normalizedEmail = (userEmail || "").trim().toLowerCase();
+        const normalizedUpvoters = upvoters.map((e) =>
+          String(e).trim().toLowerCase()
+        );
+        const hasUpvoted = normalizedUpvoters.includes(normalizedEmail);
+        console.log(
+          "normalizedEmail:",
+          normalizedEmail,
+          "hasUpvoted:",
+          hasUpvoted
+        );
+
+        if (!hasUpvoted) {
+          // Add upvote
+          const result = await issuesCollection.findOneAndUpdate(
+            { _id, upvoters: { $ne: userEmail } },
+            {
+              $addToSet: { upvoters: userEmail },
+              $inc: { upvotes: 1 },
+            },
+            { returnDocument: "after" }
+          );
+          console.log("add result:", result);
+
+          // If result.value missing, fallback to currentUpvotes + 1
+          const upvotes = result?.value?.upvotes ?? currentUpvotes + 1;
+          return res.send({ upvoted: true, upvotes });
+        } else {
+          // Remove upvote
+          const result = await issuesCollection.findOneAndUpdate(
+            { _id, upvoters: userEmail },
+            {
+              $pull: { upvoters: userEmail },
+              $inc: { upvotes: -1 },
+            },
+            { returnDocument: "after" }
+          );
+          console.log("remove result:", result);
+
+          const upvotes = Math.max(
+            0,
+            result?.value?.upvotes ?? currentUpvotes - 1
+          );
+          return res.send({ upvoted: false, upvotes });
+        }
+      } catch (err) {
+        console.error("Upvote route error:", err);
+        return res.status(500).send({ error: "Internal server error" });
+      }
     });
 
     app.listen(port, () => {
