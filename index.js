@@ -180,9 +180,6 @@ async function run() {
             createdAt: new Date(),
             isPremium: false,
             isBlocked: false,
-            completedIssue: [],
-            assignedIssue: null,
-            status: "active",
           };
 
           // Insert into MongoDB
@@ -240,6 +237,51 @@ async function run() {
       const result = await issuesCollection.find(query).toArray();
       res.send(result);
     });
+
+    //staff assign
+    app.post(
+      "/issues/:selectedIssueId/assign",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { selectedIssueId } = req.params;
+          const { staffEmail } = req.body;
+
+          if (!staffEmail) {
+            return res.status(400).json({ error: "staffEmail required" });
+          }
+
+          let _id;
+          try {
+            _id = new ObjectId(selectedIssueId);
+          } catch {
+            return res.status(400).json({ error: "Invalid issue id" });
+          }
+
+          // update issue
+          const updated = await issuesCollection.findOneAndUpdate(
+            { _id },
+            {
+              $set: {
+                status: "staff-assigned",
+                assignedStaff: staffEmail,
+              },
+            },
+            { returnDocument: "after" }
+          );
+
+          if (!updated) {
+            return res.status(404).json({ error: "Issue not found" });
+          }
+
+          res.json({ success: true, issue: updated });
+        } catch (err) {
+          console.error("Assign error:", err);
+          res.status(500).json({ error: err.message });
+        }
+      }
+    );
 
     //upvote on issue
     app.patch("/issues/:id/upvote", verifyFBToken, async (req, res) => {
