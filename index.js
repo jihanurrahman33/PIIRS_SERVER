@@ -133,6 +133,77 @@ async function run() {
       }
     );
 
+    //admin api's
+    app.post(
+      "/users/add-staff",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const {
+            name,
+            email,
+            password,
+            photoURL = "",
+            phone = "",
+            address = "",
+          } = req.body;
+
+          if (!email || !password) {
+            return res
+              .status(400)
+              .send({ error: "Email and password are required" });
+          }
+
+          // Create Firebase Authentication user
+          const userRecord = await admin.auth().createUser({
+            email,
+            password,
+            displayName: name,
+            photoURL,
+          });
+
+          // Assign custom claim so Firebase securely knows the user is staff
+          await admin
+            .auth()
+            .setCustomUserClaims(userRecord.uid, { role: "staff" });
+
+          // Build staff MongoDB document
+          const staffInfo = {
+            uid: userRecord.uid,
+            name,
+            email,
+            photoURL,
+            phone,
+            address,
+            role: "staff",
+            createdAt: new Date(),
+            isPremium: false,
+            isBlocked: false,
+            completedIssue: [],
+            assignedIssue: null,
+            status: "active",
+          };
+
+          // Insert into MongoDB
+          const result = await usersCollection.insertOne(staffInfo);
+
+          return res.status(201).send({
+            success: true,
+            message: "Staff created successfully",
+            userId: userRecord.uid,
+            insertedId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Add staff error:", error);
+          return res.status(500).send({
+            success: false,
+            error: error.message,
+          });
+        }
+      }
+    );
+
     //issues related API's
     app.get("/issues", async (req, res) => {
       const result = await issuesCollection.find().toArray();
