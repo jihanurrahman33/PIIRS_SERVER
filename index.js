@@ -72,6 +72,17 @@ async function run() {
       }
       next();
     };
+    const verifyStaff = async (req, res, next) => {
+      const email = req.decoded_email;
+
+      const query = { email };
+
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "staff") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
     app.get("/", (req, res) => {
       res.send("server is live");
     });
@@ -202,8 +213,10 @@ async function run() {
     );
 
     //issues related API's
-    app.get("/issues", async (req, res) => {
-      const result = await issuesCollection.find().toArray();
+    app.get("/issues", verifyFBToken, async (req, res) => {
+      const query = req.query;
+      console.log(query);
+      const result = await issuesCollection.find(query).limit(6).toArray();
       res.send(result);
     });
     app.get("/issues/details/:id", async (req, res) => {
@@ -230,6 +243,23 @@ async function run() {
       res.send(result);
     });
 
+    //change status by staff
+    app.patch(
+      `/issues/:issueId/status`,
+      verifyFBToken,
+      verifyStaff,
+      async (req, res) => {
+        const issueId = req.params.issueId;
+        const { status } = req.body;
+
+        const query = { _id: new ObjectId(issueId) };
+        const updatedDoc = { $set: { status } };
+
+        const result = await issuesCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
     app.get("/my-issues", verifyFBToken, async (req, res) => {
       const email = req.decoded_email;
       const query = { createdBy: email };
@@ -237,6 +267,21 @@ async function run() {
       const result = await issuesCollection.find(query).toArray();
       res.send(result);
     });
+
+    // getissuesByAssinedStaff
+    app.get(
+      "/issues/:staffEmail/assinedTask",
+      verifyFBToken,
+      verifyStaff,
+      async (req, res) => {
+        const assignedStaff = req.params.staffEmail;
+        const query = { assignedStaff };
+
+        const result = await issuesCollection.find(query).toArray();
+
+        res.send(result);
+      }
+    );
 
     //staff assign
     app.post(
