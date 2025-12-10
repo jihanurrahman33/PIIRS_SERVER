@@ -3,7 +3,7 @@ const cors = require("cors");
 const app = express();
 const port = process.env.PORT || 3000;
 require("dotenv").config();
-
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 
 const serviceAccount = require("./piirs-1d68b-firebase-adminsdk.json");
@@ -85,6 +85,126 @@ async function run() {
     };
     app.get("/", (req, res) => {
       res.send("server is live");
+    });
+
+    //payment related api
+    app.post("/create-checkout-session", verifyFBToken, async (req, res) => {
+      try {
+        // req.decoded_email and req.decoded_uid should be set by verifyFBToken
+        const userEmail = req.decoded_email;
+        const userUid = req.decoded_uid || null;
+        if (!userEmail) return res.status(401).send({ error: "Unauthorized" });
+
+        // amount in smallest currency unit (1000 BDT -> 1000 * 100 = 100000)
+        const amount = Math.round(1000 * 100);
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "bdt", // confirm Stripe supports BDT for your account
+                product_data: {
+                  name: "Premium access (one-time)",
+                  description: "One-time premium subscription — 1000 BDT",
+                },
+                unit_amount: amount,
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            userEmail,
+            userUid: userUid || "",
+            // any other metadata you want
+          },
+          success_url: `${process.env.CLIENT_URL}/dashboard/profile?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_URL}/dashboard/profile?canceled=true`,
+        });
+
+        return res.send({ url: session.url, id: session.id });
+      } catch (err) {
+        console.error("create-checkout-session error:", err);
+        return res.status(500).send({ error: "Failed to create session" });
+      }
+    });
+    app.patch("/payment-success", async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
+        if (!sessionId)
+          return res.status(400).send({ error: "session_id required" });
+
+        // Retrieve session (expand payment_intent if you want more details)
+        const session = await stripe.checkout.sessions.retrieve(sessionId, {
+          expand: ["payment_intent"],
+        });
+        if (!session)
+          return res.status(404).send({ error: "Session not found" });
+
+        const paymentIntent =
+          typeof session.payment_intent === "object"
+            ? session.payment_intent.id
+            : session.payment_intent;
+
+        if (!paymentIntent) {
+          return res
+            .status(400)
+            .send({ error: "Payment intent not available on session" });
+        }
+
+        // Avoid duplicates: check by payment_intent
+        const existing = await paymentsCollection.findOne({
+          payment_intent: paymentIntent,
+        });
+        if (existing) {
+          return res.send({
+            message: "already exist",
+            transactionId: paymentIntent,
+            payment: existing,
+          });
+        }
+
+        // Build payment document
+        const paymentDoc = {
+          stripeSessionId: session.id,
+          payment_intent: paymentIntent,
+          amount_total: session.amount_total ?? null, // in minor units
+          amount_display:
+            session.amount_total != null ? session.amount_total / 100 : null, // for easy reading
+          currency: session.currency ?? null,
+          payment_status: session.payment_status ?? null,
+          customer_email:
+            session.customer_email ?? session.metadata?.userEmail ?? null,
+          metadata: session.metadata ?? {},
+          createdAt: new Date(),
+        };
+
+        // Insert payment record
+        const insertRes = await paymentsCollection.insertOne(paymentDoc);
+
+        // If paid, update user's premium flag (metadata should include userEmail)
+        if (session.payment_status === "paid") {
+          const userEmail = session.metadata?.userEmail;
+          if (userEmail) {
+            await usersCollection.updateOne(
+              { email: userEmail },
+              { $set: { isPremium: true, premiumSince: new Date() } },
+              { upsert: false }
+            );
+          }
+        }
+
+        return res.send({
+          success: true,
+          transactionId: paymentIntent,
+          paymentId: insertRes.insertedId,
+          userEmail: session.metadata?.userEmail ?? null,
+        });
+      } catch (err) {
+        console.error("payment-success error:", err);
+        return res.status(500).send({ success: false, error: err.message });
+      }
     });
 
     //users related API's
@@ -223,7 +343,7 @@ async function run() {
         .toArray();
       res.send(result);
     });
-    app.get("/issues/all", verifyFBToken, async (req, res) => {
+    app.get("/issues/all", async (req, res) => {
       const result = await issuesCollection.find().toArray();
       res.send(result);
     });
@@ -471,6 +591,7 @@ async function run() {
     app.get(
       "/dashboard/staff/:email/stats",
       verifyFBToken,
+      verifyStaff,
       async (req, res) => {
         try {
           const targetEmail = req.params.email;
@@ -615,6 +736,146 @@ async function run() {
           return res.send(result);
         } catch (err) {
           console.error("GET /dashboard/staff/:email/stats error:", err);
+          return res.status(500).send({ error: "Internal server error" });
+        }
+      }
+    );
+    //citizen dashboard api
+    // GET /dashboard/citizen/:email/stats
+    app.get(
+      "/dashboard/citizen/:email/stats",
+      verifyFBToken,
+      async (req, res) => {
+        try {
+          const targetEmail = req.params.email;
+          const requesterEmail = req.decoded_email; // set by verifyFBToken
+
+          if (!targetEmail)
+            return res.status(400).send({ error: "Missing email" });
+          if (!requesterEmail)
+            return res.status(401).send({ error: "Unauthorized" });
+
+          // find requester to check role
+          const requester = await usersCollection.findOne({
+            email: requesterEmail,
+          });
+          if (!requester)
+            return res.status(401).send({ error: "Requester not found" });
+
+          const isAdmin = requester.role === "admin";
+          const isSelf = requesterEmail === targetEmail;
+          if (!isAdmin && !isSelf)
+            return res.status(403).send({ error: "Forbidden" });
+
+          // Basic counts for the user's issues
+          const baseFilter = { createdBy: targetEmail };
+
+          const submittedCountPromise =
+            issuesCollection.countDocuments(baseFilter);
+
+          const resolvedCountPromise = issuesCollection.countDocuments({
+            ...baseFilter,
+            status: "resolved",
+          });
+
+          const pendingCountPromise = issuesCollection.countDocuments({
+            ...baseFilter,
+            status: "pending",
+          });
+
+          // openCount = issues not resolved/rejected/closed
+          const openCountPromise = issuesCollection.countDocuments({
+            ...baseFilter,
+            status: { $nin: ["resolved", "rejected", "closed"] },
+          });
+
+          // upvotesGiven = number of issues where this user is in upvoters array
+          const upvotesGivenPromise = issuesCollection.countDocuments({
+            upvoters: targetEmail,
+          });
+
+          // last7Days: number of issues created by this user per day for last 7 days
+          const now = new Date();
+          const start7 = new Date(now);
+          start7.setHours(0, 0, 0, 0);
+          start7.setDate(start7.getDate() - 6); // include today and previous 6 days
+
+          const last7Agg = await issuesCollection
+            .aggregate([
+              {
+                $match: {
+                  createdBy: targetEmail,
+                  createdAt: { $gte: start7 },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                  },
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ])
+            .toArray();
+
+          // resolve parallel count promises
+          const [
+            submittedCount,
+            resolvedCount,
+            pendingCount,
+            openCount,
+            upvotesGiven,
+          ] = await Promise.all([
+            submittedCountPromise,
+            resolvedCountPromise,
+            pendingCountPromise,
+            openCountPromise,
+            upvotesGivenPromise,
+          ]);
+
+          // Build last7Days array (fill missing days with 0)
+          const countsByDate = {};
+          last7Agg.forEach((d) => {
+            countsByDate[d._id] = d.count;
+          });
+
+          const last7Days = [];
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(start7);
+            d.setDate(start7.getDate() + i);
+            const iso = d.toISOString().slice(0, 10); // YYYY-MM-DD
+            const label = `${iso.slice(5)}`; // MM-DD
+            last7Days.push({
+              date: iso,
+              label,
+              count: countsByDate[iso] || 0,
+            });
+          }
+
+          // Find user doc to return isBlocked flag (if you want)
+          const targetUserDoc = await usersCollection.findOne({
+            email: targetEmail,
+          });
+          const isBlocked = Boolean(
+            targetUserDoc &&
+              (targetUserDoc.isBlocked || targetUserDoc.isBlcoked)
+          );
+
+          const result = {
+            submittedCount: submittedCount || 0,
+            resolvedCount: resolvedCount || 0,
+            pendingCount: pendingCount || 0,
+            openCount: openCount || 0,
+            upvotesGiven: upvotesGiven || 0,
+            isBlocked: !!isBlocked,
+            last7Days,
+          };
+
+          return res.send(result);
+        } catch (err) {
+          console.error("GET /dashboard/citizen/:email/stats error:", err);
           return res.status(500).send({ error: "Internal server error" });
         }
       }
