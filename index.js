@@ -466,6 +466,159 @@ async function run() {
         res.send(result);
       }
     );
+    //staff dashboard stats
+    // GET /dashboard/staff/:email/stats
+    app.get(
+      "/dashboard/staff/:email/stats",
+      verifyFBToken,
+      async (req, res) => {
+        try {
+          const targetEmail = req.params.email;
+          const requesterEmail = req.decoded_email; // set by verifyFBToken
+
+          if (!targetEmail)
+            return res.status(400).send({ error: "Missing staff email" });
+          if (!requesterEmail)
+            return res.status(401).send({ error: "Unauthorized" });
+
+          // authorize: allow if requester is the same user or admin
+          const requester = await usersCollection.findOne({
+            email: requesterEmail,
+          });
+          if (!requester)
+            return res.status(401).send({ error: "Requester not found" });
+
+          const isAdmin = requester.role === "admin";
+          const isSelf = requesterEmail === targetEmail;
+          if (!isAdmin && !isSelf) {
+            return res.status(403).send({ error: "Forbidden" });
+          }
+
+          // Helper: match assignedStaff stored either as string email or object { email }
+          const assignedMatch = {
+            $or: [
+              { "assignedStaff.email": targetEmail },
+              { assignedStaff: targetEmail },
+              { assignedStaff: { $eq: targetEmail } }, // defensive
+            ],
+          };
+
+          // 1) assignedCount: issues currently assigned to staff (not resolved/rejected/closed)
+          const openStatusFilter = { $nin: ["resolved", "rejected", "closed"] };
+          const assignedCount = await issuesCollection.countDocuments({
+            ...assignedMatch,
+            status: openStatusFilter,
+          });
+
+          // 2) resolvedCount: issues with status resolved assigned to staff
+          const resolvedCount = await issuesCollection.countDocuments({
+            ...assignedMatch,
+            status: "resolved",
+          });
+
+          // 3) openCount: similar to assignedCount but explicit 'open' statuses if you use specific ones
+          // (keeps parity with UI variable 'openCount')
+          const openCount = assignedCount;
+
+          // 4) avgResponseHours: average hours between assignedAt -> resolvedAt for resolved issues by this staff
+          // Only consider docs where both assignedAt and resolvedAt exist
+          const avgAgg = await issuesCollection
+            .aggregate([
+              {
+                $match: {
+                  ...assignedMatch,
+                  status: "resolved",
+                  assignedAt: { $exists: true, $ne: null },
+                  resolvedAt: { $exists: true, $ne: null },
+                },
+              },
+              {
+                $project: {
+                  diffMs: { $subtract: ["$resolvedAt", "$assignedAt"] },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  avgMs: { $avg: "$diffMs" },
+                  count: { $sum: 1 },
+                },
+              },
+            ])
+            .toArray();
+
+          let avgResponseHours = "-";
+          if (avgAgg && avgAgg[0] && typeof avgAgg[0].avgMs === "number") {
+            const avgHours = avgAgg[0].avgMs / (1000 * 60 * 60);
+            // round to one decimal
+            avgResponseHours = Math.round(avgHours * 10) / 10;
+          }
+
+          // 5) last7Days: resolved issues count per day for last 7 days (including today)
+          const now = new Date();
+          const start7 = new Date(now);
+          start7.setHours(0, 0, 0, 0);
+          start7.setDate(start7.getDate() - 6); // 7 days total: today and previous 6
+
+          const last7Agg = await issuesCollection
+            .aggregate([
+              {
+                $match: {
+                  ...assignedMatch,
+                  status: "resolved",
+                  resolvedAt: { $gte: start7 },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $dateToString: { format: "%Y-%m-%d", date: "$resolvedAt" },
+                  },
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ])
+            .toArray();
+
+          // Convert aggregation result to map for easy filling of missing days
+          const countsByDate = {};
+          last7Agg.forEach((d) => (countsByDate[d._id] = d.count));
+
+          // Build array of last 7 days with labels
+          const last7Days = [];
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(start7);
+            d.setDate(start7.getDate() + i);
+            const iso = d.toISOString().slice(0, 10); // YYYY-MM-DD
+            // label: e.g., '12-09' or short day like 'Mon'
+            const label = `${iso.slice(5)}`; // MM-DD
+            last7Days.push({
+              date: iso,
+              label,
+              count: countsByDate[iso] || 0,
+            });
+          }
+
+          // assignedToYou: how many issues are assigned to this staff (same as assignedCount but returning for compatibility)
+          const assignedToYou = assignedCount;
+
+          const result = {
+            assignedCount,
+            resolvedCount,
+            openCount,
+            assignedToYou,
+            avgResponseHours,
+            last7Days,
+          };
+
+          return res.send(result);
+        } catch (err) {
+          console.error("GET /dashboard/staff/:email/stats error:", err);
+          return res.status(500).send({ error: "Internal server error" });
+        }
+      }
+    );
 
     app.listen(port, () => {
       console.log(`app listening on port ${port}`);
