@@ -212,13 +212,30 @@ async function run() {
       }
     );
 
-    //issues related API's
-    app.get("/issues", verifyFBToken, async (req, res) => {
+    //latest resolved issues
+    app.get("/issues", async (req, res) => {
       const query = req.query;
       console.log(query);
-      const result = await issuesCollection.find(query).limit(6).toArray();
+      const result = await issuesCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .toArray();
       res.send(result);
     });
+    app.get("/issues/all", verifyFBToken, async (req, res) => {
+      const result = await issuesCollection.find().toArray();
+      res.send(result);
+    });
+    app.get(
+      "/issues/all/admin",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const result = await issuesCollection.find().toArray();
+        res.send(result);
+      }
+    );
     app.get("/issues/details/:id", async (req, res) => {
       const issueId = req.params.id;
       const query = { _id: new ObjectId(issueId) };
@@ -416,6 +433,39 @@ async function run() {
         return res.status(500).send({ error: "Internal server error" });
       }
     });
+    //dashoboard stats of admin
+    app.get(
+      "/dashboard/admin/stats",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const issues = await issuesCollection.find().toArray();
+        const totalIssues = issues.length;
+        const resolvedIssues = await issuesCollection
+          .find({
+            status: "resolved",
+          })
+          .toArray();
+        const totalResolvedIssues = resolvedIssues.length;
+        const pendingIssues = await issuesCollection
+          .find({ status: "pending" })
+          .toArray();
+        const totalPendingIssues = pendingIssues.length;
+        const rejectedIssues = await issuesCollection
+          .find({
+            status: "rejected",
+          })
+          .toArray();
+        const totalRejectedIssues = rejectedIssues.length;
+        const result = {
+          totalIssues,
+          totalResolvedIssues,
+          totalPendingIssues,
+          totalRejectedIssues,
+        };
+        res.send(result);
+      }
+    );
 
     app.listen(port, () => {
       console.log(`app listening on port ${port}`);
