@@ -213,6 +213,7 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
     app.get("/users/:email/role", async (req, res) => {
       const email = req.params.email;
       const query = {
