@@ -251,6 +251,21 @@ async function run() {
       return res.send({ message: "user Already Exist" });
     });
 
+    app.patch(`/users/:id/isBlocked`, async (req, res) => {
+      const { isBlcoked } = req.body;
+      console.log(isBlcoked);
+      const userId = req.params.id;
+      const query = { _id: new ObjectId(userId) };
+      const updatedDoc = {
+        $set: {
+          isBlcoked,
+        },
+      };
+
+      const result = await usersCollection.updateOne(query, updatedDoc);
+      res.send(result);
+    });
+
     app.get(
       "/users/:role/staffs",
       verifyFBToken,
