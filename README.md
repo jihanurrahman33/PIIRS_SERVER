@@ -1,371 +1,300 @@
+# PIIRS Server
 
+A robust Node.js backend API for the **Public Infrastructure Reporting System** (PIIRS) — enabling citizens to report and track infrastructure issues with role-based access control, premium subscriptions, and real-time collaboration features.
 
----
-
-```md
-# Public Infrastructure Reporting System — Backend API
-
-Backend API for the **Public Infrastructure Reporting System**, supporting:
-- User authentication via **Firebase Admin**
-- Role & profile management
-- Issue reporting (CRUD)
-- Image support
-- Premium subscription using **Stripe Checkout**
-- Usage limits for free users
-- Secure endpoints via JWT (Firebase ID Token)
-- MongoDB persistence
-
-This README provides setup instructions, API details, environment configuration, and development workflow.
+![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&logoColor=white)
+![Express](https://img.shields.io/badge/Express-5.2-000000?logo=express&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-7.0-13AA52?logo=mongodb&logoColor=white)
+![Firebase](https://img.shields.io/badge/Firebase-Admin-FFCA28?logo=firebase&logoColor=white)
 
 ---
 
-## 📌 Features
+## 📖 Overview
 
-### 🔐 Authentication
-- Firebase Authentication on frontend  
-- Backend verifies ID Token using **Firebase Admin SDK**
-
-### 👤 User Management
-- Create/update user profile  
-- Track user subscription status (`isPremium`)  
-- Track issue report count & daily limit  
-
-### 📝 Issue Reporting
-- Create issue with title, description, category, images  
-- View all issues or issues by user  
-- Sort & filter by query parameters  
-- Issue details endpoint  
-
-### 💳 Premium Subscription (Stripe)
-- Create Stripe Checkout Session  
-- Verify completed payment  
-- Update user’s `isPremium` status in MongoDB  
-- Limit issue creation for free users  
-
-### 🗄 Database
-- MongoDB Atlas  
-- Collections: `users`, `issues`, `payments`
+PIIRS Server provides a secure, scalable API for managing infrastructure issue reports, user authentication, role-based permissions, and subscription-based features. It leverages Firebase for authentication, MongoDB for persistence, and Stripe for payment processing.
 
 ---
 
-# 📁 Project Structure
+## ✨ Key Features
 
+### 🔐 Authentication & Security
+- **Firebase ID Token verification** for all protected endpoints
+- JWT-based token validation via Firebase Admin SDK
+- Role-based access control (Admin, Staff, User)
+- Secure middleware authentication chain
+
+### 👥 User Management
+- User profile creation and updates
+- Role assignment (admin, staff, user)
+- Subscription status tracking (`isPremium`)
+- Daily issue reporting limits
+- User activity tracking
+
+### 📝 Issue Reporting System
+- Create, read, update, delete (CRUD) operations for issues
+- Support for titles, descriptions, categories, and images
+- Issue filtering by user, category, status, and date
+- Priority and urgency assignment
+- Real-time issue timeline tracking
+
+### 💳 Premium Features
+- **Stripe Checkout integration** for secure payments
+- Premium subscription management
+- Elevated usage limits for premium users
+- Free tier with reporting caps
+- Payment history tracking
+
+### 🗄 Data Management
+- **MongoDB Atlas** for reliable data persistence
+- Collections: `users`, `issues`, `timelines`, `payments`
+- Indexed queries for optimal performance
+
+### 🚀 Deployment
+- **Vercel serverless deployment** ready
+- Automatic CORS handling
+- Environment-based configuration
+
+---
+
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Runtime** | Node.js |
+| **Framework** | Express 5.2 |
+| **Database** | MongoDB 7.0 |
+| **Authentication** | Firebase Admin SDK 13.6 |
+| **Payments** | Stripe 20.0 |
+| **Deployment** | Vercel |
+| **Development** | Nodemon 3.1 |
+
+---
+
+## 📋 Prerequisites
+
+- Node.js 18+ (v20+ recommended)
+- npm or yarn
+- MongoDB Atlas account & connection string
+- Firebase project & Admin SDK credentials
+- Stripe API keys
+- Vercel account (for deployment)
+
+---
+
+## ⚙️ Installation & Setup
+
+### 1. Clone the Repository
+```bash
+git clone <repository-url>
+cd PIIRS_SERVER
 ```
 
-backend/
-├── src/
-│   ├── config/
-│   │   ├── firebase.js       # Firebase Admin setup
-│   │   ├── db.js             # MongoDB connection
-│   │   └── stripe.js         # Stripe setup
-│   ├── middleware/
-│   │   └── verifyToken.js    # Auth middleware
-│   ├── routes/
-│   │   ├── users.js          # User endpoints
-│   │   ├── issues.js         # Issue endpoints
-│   │   └── payments.js       # Stripe endpoints
-│   ├── models/
-│   │   ├── User.js
-│   │   └── Issue.js
-│   ├── utils/
-│   │   └── upload.js         # Image upload helpers (if using)
-│   └── app.js                # Express initialization
-├── .env
-├── package.json
-└── README.md
-
-````
-
----
-
-# ⚙️ Environment Variables
-
-Create a `.env` file:
-
-```env
-# Server
-PORT=5000
-CLIENT_URL=http://localhost:5173
-
-# MongoDB
-MONGODB_URI=mongodb+srv://...
-
-# Firebase Admin
-FIREBASE_PROJECT_ID=
-FIREBASE_CLIENT_EMAIL=
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_KEY\n-----END PRIVATE KEY-----\n"
-
-# Stripe
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...   # optional if using webhooks
-
-# Subscription config
-FREE_USER_LIMIT=3
-````
-
-⚠️ **Never expose private keys to GitHub.**
-⚠️ Firebase Private Key must include newline escapes (`\n`).
-
----
-
-# 🚀 Installation & Run (Development)
-
-### 1️⃣ Install dependencies
-
+### 2. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2️⃣ Start development server
+### 3. Environment Configuration
+Create a `.env` file in the root directory:
 
+```env
+PORT=3000
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>
+FB_SERVICE_KEY=<base64-encoded-firebase-service-account>
+STRIPE_SECRET_KEY=sk_test_xxxxx
+```
+
+**Environment Variables:**
+- `PORT` — Server port (default: 3000)
+- `MONGODB_URI` — MongoDB connection string
+- `FB_SERVICE_KEY` — Base64-encoded Firebase service account JSON
+- `STRIPE_SECRET_KEY` — Stripe secret API key
+
+### 4. Firebase Setup
+1. Generate Firebase service account from Firebase Console
+2. Encode to base64:
+```bash
+node encode.js  # Outputs base64-encoded service key
+```
+3. Set `FB_SERVICE_KEY` in `.env`
+
+### 5. Run the Server
+**Development:**
 ```bash
 npm run dev
 ```
 
-### 3️⃣ Server runs at:
+**Production:**
+```bash
+node index.js
+```
+
+Server runs on `http://localhost:3000`
+
+---
+
+## 🔌 API Endpoints
+
+### Authentication
+All protected endpoints require `Authorization: Bearer <firebase-id-token>` header.
+
+### User Endpoints
+- `POST /users` — Create user profile
+- `GET /users/<uid>` — Get user details
+- `PATCH /users/<uid>` — Update user profile
+- `GET /users` — List all users (admin only)
+
+### Issue Endpoints
+- `POST /issues` — Create new issue (authenticated)
+- `GET /issues` — List all issues (with filters)
+- `GET /issues/<id>` — Get issue details
+- `PUT /issues/<id>` — Update issue (owner or admin)
+- `DELETE /issues/<id>` — Delete issue (owner or admin)
+- `GET /issues/user/<uid>` — Get user's issues
+
+### Payment Endpoints
+- `POST /create-checkout-session` — Initialize Stripe payment
+- `POST /verify-payment` — Confirm payment completion
+- `GET /payment-history/<uid>` — View payment history
+
+### Timeline Endpoints
+- `POST /timelines` — Create issue timeline entry
+- `GET /timelines/<issue-id>` — Get issue timeline
+
+---
+
+## 🏗 Project Structure
 
 ```
-http://localhost:5000
+PIIRS_SERVER/
+├── index.js              # Main application & API endpoints
+├── encode.js             # Firebase service key encoding utility
+├── package.json          # Dependencies & scripts
+├── vercel.json           # Vercel deployment config
+├── .env                  # Environment variables (not in git)
+└── README.md             # This file
 ```
 
 ---
 
-# 🔐 Authentication Flow
+## 🔐 Middleware
 
-1. Frontend obtains Firebase ID Token from Firebase Auth
-2. Frontend sends token in every request:
+### `verifyFBToken`
+Validates Firebase ID tokens from request headers.
+```javascript
+// Usage: app.get("/protected-route", verifyFBToken, handler)
+```
 
-   ```
-   Authorization: Bearer <token>
-   ```
-3. Backend verifies token:
-
-   ```js
-   admin.auth().verifyIdToken(token)
-   ```
-4. Identifies user by UID or email
-5. Allows access to protected routes
+### `verifyAdmin` & `verifyStaff`
+Role-based access control for administrative operations.
 
 ---
 
-# 🔑 Middleware: verifyToken
+## 📦 Database Schema
 
-All protected routes use:
-
-```js
-Authorization: Bearer <Firebase ID Token>
-```
-
-Example route usage:
-
-```js
-router.get("/me", verifyToken, async (req, res) => {
-  res.json(req.user);
-});
-```
-
----
-
-# 🧠 User Endpoints
-
-| Method | Endpoint                | Description                           |
-| ------ | ----------------------- | ------------------------------------- |
-| GET    | `/users/me`             | Get logged-in user profile            |
-| POST   | `/users`                | Create/update profile                 |
-| GET    | `/users/me/issue-count` | Returns `{ count, limit, isPremium }` |
-
-### `/users/me/issue-count` Response Example:
-
+### Users Collection
 ```json
 {
-  "count": 2,
-  "limit": 3,
-  "isPremium": false
+  "_id": ObjectId,
+  "email": "user@example.com",
+  "uid": "firebase-uid",
+  "role": "user|admin|staff",
+  "isPremium": boolean,
+  "issueCount": number,
+  "dailyLimit": number,
+  "createdAt": ISODate
 }
 ```
 
----
-
-# 📝 Issue Endpoints
-
-| Method | Endpoint      | Description                |
-| ------ | ------------- | -------------------------- |
-| POST   | `/issues`     | Create an issue            |
-| GET    | `/issues`     | List issues (with filters) |
-| GET    | `/issues/:id` | Get issue details          |
-
-### Issue object example
-
+### Issues Collection
 ```json
 {
-  "_id": "674ab12c",
-  "title": "Street light not working",
-  "description": "...",
+  "_id": ObjectId,
+  "title": "string",
+  "description": "string",
+  "category": "string",
   "images": ["url1", "url2"],
-  "category": "Electrical",
-  "status": "Pending",
-  "createdBy": "user@gmail.com",
-  "createdAt": "2024-01-05T00:00:00Z"
+  "authorEmail": "user@example.com",
+  "status": "open|in-review|resolved",
+  "priority": "low|medium|high",
+  "createdAt": ISODate,
+  "updatedAt": ISODate
 }
 ```
 
----
-
-# ⭐ Premium Subscription (Stripe)
-
-## 1️⃣ Create Checkout Session
-
-**POST** `/create-checkout-session`
-
-Response:
-
+### Payments Collection
 ```json
 {
-  "url": "https://checkout.stripe.com/pay/cs_test_..."
-}
-```
-
-Frontend redirects user to Stripe Checkout.
-
----
-
-## 2️⃣ Handle Success Redirect
-
-Stripe sends user back:
-
-```
-/profile?session_id=cs_test_123
-```
-
-Frontend calls:
-
-```
-PATCH /payment-success?session_id=cs_test_123
-```
-
-Backend verifies session → updates DB:
-
-```json
-{ "success": true }
-```
-
----
-
-## 3️⃣ Backend Updates DB Example
-
-```js
-await users.updateOne(
-  { email: user.email },
-  { $set: { isPremium: true } }
-);
-```
-
----
-
-# 🔒 Free User Limitation Logic
-
-Backend checks before creating new issue:
-
-```js
-if (!user.isPremium && count >= FREE_USER_LIMIT) {
-  return res.status(403).json({
-    error: "Free limit reached. Please upgrade to premium."
-  });
+  "_id": ObjectId,
+  "email": "user@example.com",
+  "amount": number,
+  "currency": "usd",
+  "status": "completed|pending|failed",
+  "stripeSessionId": "string",
+  "createdAt": ISODate
 }
 ```
 
 ---
 
-# 🛠 Deployment Notes
+## 🚀 Deployment
 
-### Deployment Options
+### Vercel Deployment
+The project is configured for Vercel serverless deployment via `vercel.json`.
 
-* **Render**
-* **Railway**
-* **Vercel Serverless Functions**
-* **AWS Lambda**
-* **DigitalOcean App Platform**
-
-### CORS
-
-Make sure `CLIENT_URL` is whitelisted:
-
-```js
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL,
-    credentials: true,
-  })
-);
-```
-
----
-
-# 🧪 Testing the API
-
-### Check auth:
-
+**Deploy:**
 ```bash
-curl -H "Authorization: Bearer <token>" http://localhost:5000/users/me
+vercel
 ```
 
-### Create issue:
+**Environment Variables on Vercel:**
+Set all `.env` variables in Vercel project settings before deploying.
 
+---
+
+## 🐛 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `CORS errors` | Verify client origin is allowed in CORS middleware |
+| `Firebase auth fails` | Check `FB_SERVICE_KEY` is valid base64 and properly decoded |
+| `MongoDB connection timeout` | Verify connection string and whitelist IP in MongoDB Atlas |
+| `Stripe errors` | Ensure `STRIPE_SECRET_KEY` is correct and in test mode for development |
+
+---
+
+## 📝 Development Workflow
+
+### Local Development
 ```bash
-curl -X POST http://localhost:5000/issues \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Test", "description":"Demo"}'
+npm run dev  # Starts server with hot-reload via nodemon
 ```
 
----
-
-# 🐛 Troubleshooting
-
-### ❗ Premium not showing on frontend?
-
-* Ensure `/users/me` returns `"isPremium": true`
-* Verify frontend includes Bearer token
-* Check Stripe webhook/payment-success updated DB properly
-
-### ❗ CORS errors?
-
-* Check `CLIENT_URL` in `.env`
-* Enable proper CORS configuration
-
-### ❗ Firebase "invalid key format"?
-
-Escape newlines in private key:
-
-```
-"-----BEGIN PRIVATE KEY-----\nLINE1\nLINE2\n-----END PRIVATE KEY-----\n"
-```
+### Running Tests
+Currently, no automated tests are configured. Consider adding Jest or Mocha.
 
 ---
 
-# 🤝 Contributing
+## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes with meaningful messages
-4. Create a Pull Request
-
-Coding Guidelines:
-
-* Use async/await
-* Keep controllers clean
-* Use middleware for auth/validation
-* Write modular routes
+1. Create a feature branch: `git checkout -b feature/your-feature`
+2. Commit changes: `git commit -m "Add feature description"`
+3. Push to branch: `git push origin feature/your-feature`
+4. Open a Pull Request
 
 ---
 
-# 👤 Maintainer Info
+## 📄 License
 
-**Md Jihanur Rahman**
-📧 `mdjihanurrahman5@gmail.com`
-🔗 LinkedIn: [https://www.linkedin.com/in/md-jihanur-rahman/](https://www.linkedin.com/in/md-jihanur-rahman/)
+ISC
 
 ---
 
-# 🎉 Thank You!
+## 📞 Support
+
+For issues or questions, please open an issue on the repository.
+
+---
+
+**Last Updated:** December 2025
 
