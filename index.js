@@ -424,6 +424,32 @@ async function run() {
       res.send(result);
     });
 
+
+    // Get issues by user email with optional limit
+    app.get("/issues/user/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const decodedEmail = req.decoded_email;
+      const limit = parseInt(req.query.limit) || 0;
+
+      // Allow access if it's the user's own data or if the requester is an admin
+      if (decodedEmail !== email) {
+        const user = await usersCollection.findOne({ email: decodedEmail });
+        if (!user || user.role !== "admin") {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+      }
+
+      const query = { createdBy: email };
+      let cursor = issuesCollection.find(query).sort({ createdAt: -1 });
+
+      if (limit > 0) {
+        cursor = cursor.limit(limit);
+      }
+
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     // getissuesByAssinedStaff
     app.get(
       "/issues/:staffEmail/assinedTask",
