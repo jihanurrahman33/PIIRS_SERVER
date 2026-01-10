@@ -212,8 +212,18 @@ async function run() {
 
     //users related API's
     app.get("/users", async (req, res) => {
-      const cursor = usersCollection.find();
-      const result = await cursor.toArray();
+      const { limit, sort } = req.query;
+      let query = usersCollection.find();
+
+      if (sort === "createdAt_desc") {
+        query = query.sort({ createdAt: -1 });
+      }
+
+      if (limit) {
+        query = query.limit(parseInt(limit));
+      }
+
+      const result = await query.toArray();
       res.send(result);
     });
 
@@ -353,13 +363,27 @@ async function run() {
 
     //latest resolved issues
     app.get("/issues", async (req, res) => {
-      const query = req.query;
-      console.log(query);
-      const result = await issuesCollection
-        .find(query)
-        .sort({ createdAt: -1 })
-        .limit(8)
-        .toArray();
+      const { limit, sort, ...filters } = req.query;
+      const queryOptions = {};
+
+      if (limit) {
+        queryOptions.limit = parseInt(limit);
+      }
+      
+      let cursor = issuesCollection.find(filters);
+
+      if (sort === "createdAt_desc") {
+        cursor = cursor.sort({ createdAt: -1 });
+      } else {
+        // default sort if needed, or rely on client
+        cursor = cursor.sort({ createdAt: -1 });
+      }
+
+      if (queryOptions.limit) {
+        cursor = cursor.limit(queryOptions.limit);
+      }
+
+      const result = await cursor.toArray();
       res.send(result);
     });
     app.get("/issues/all", async (req, res) => {
@@ -599,36 +623,90 @@ async function run() {
       }
     });
     //dashoboard stats of admin
+    //dashoboard stats of admin
     app.get(
       "/dashboard/admin/stats",
       verifyFBToken,
       verifyAdmin,
       async (req, res) => {
-        const issues = await issuesCollection.find().toArray();
-        const totalIssues = issues.length;
-        const resolvedIssues = await issuesCollection
-          .find({
+        try {
+          const issues = await issuesCollection.find().toArray();
+          const totalIssues = issues.length;
+          const resolvedIssues = await issuesCollection.countDocuments({
             status: "resolved",
-          })
-          .toArray();
-        const totalResolvedIssues = resolvedIssues.length;
-        const pendingIssues = await issuesCollection
-          .find({ status: "pending" })
-          .toArray();
-        const totalPendingIssues = pendingIssues.length;
-        const rejectedIssues = await issuesCollection
-          .find({
+          });
+          const pendingIssues = await issuesCollection.countDocuments({
+            status: "pending",
+          });
+          const rejectedIssues = await issuesCollection.countDocuments({
             status: "rejected",
-          })
-          .toArray();
-        const totalRejectedIssues = rejectedIssues.length;
-        const result = {
-          totalIssues,
-          totalResolvedIssues,
-          totalPendingIssues,
-          totalRejectedIssues,
-        };
-        res.send(result);
+          });
+
+          // Payment stats
+          const payments = await paymentsCollection.find().toArray();
+          const paymentsCount = payments.length;
+          const paymentsTotalAmount = payments.reduce((acc, curr) => {
+             // amount_display is user-friendly, amount_total is in cents
+             // If you store amount_display, use it. if not, use amount_total/100
+             const val = curr.amount_display ?? (curr.amount_total ? curr.amount_total / 100 : 0);
+             return acc + val;
+          }, 0);
+
+          // Last 7 days activity
+          const now = new Date();
+          const start7 = new Date(now);
+          start7.setHours(0, 0, 0, 0);
+          start7.setDate(start7.getDate() - 6);
+
+          const last7Agg = await issuesCollection
+            .aggregate([
+              {
+                $match: {
+                  createdAt: { $gte: start7 },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                  },
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ])
+            .toArray();
+
+          const countsByDate = {};
+          last7Agg.forEach((d) => (countsByDate[d._id] = d.count));
+
+          const last7Days = [];
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(start7);
+            d.setDate(start7.getDate() + i);
+            const iso = d.toISOString().slice(0, 10);
+            const label = `${iso.slice(5)}`;
+            last7Days.push({
+              date: iso,
+              label,
+              count: countsByDate[iso] || 0,
+            });
+          }
+
+          const result = {
+            totalIssues,
+            totalResolvedIssues: resolvedIssues, // Use counts directly
+            totalPendingIssues: pendingIssues,
+            totalRejectedIssues: rejectedIssues,
+            paymentsCount,
+            paymentsTotalAmount,
+            last7Days,
+          };
+          res.send(result);
+        } catch (err) {
+          console.error("Admin stats error:", err);
+          res.status(500).send({ error: "Internal server error" });
+        }
       }
     );
     //staff dashboard stats
