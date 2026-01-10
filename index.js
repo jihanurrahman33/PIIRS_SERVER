@@ -475,13 +475,30 @@ async function run() {
     });
 
     // getissuesByAssinedStaff
+    // getissuesByAssinedStaff
     app.get(
       "/issues/:staffEmail/assinedTask",
       verifyFBToken,
       verifyStaff,
       async (req, res) => {
         const assignedStaff = req.params.staffEmail;
-        const query = { assignedStaff };
+        const isToday = req.query.today === "true";
+        let query = { assignedStaff };
+
+        if (isToday) {
+          const now = new Date();
+          const startOfDay = new Date(now.setHours(0, 0, 0, 0));
+          const endOfDay = new Date(now.setHours(23, 59, 59, 999));
+
+          // Filter by assignedAt if available, otherwise fallback might be needed 
+          // but for "Today's Tasks" assignedAt is most relevant.
+          // Using $or to be safe if assignedAt wasn't set on older data, 
+          // maybe fall back to createdAt? For now, let's stick to assignedAt as it's cleaner.
+          query.assignedAt = {
+            $gte: startOfDay,
+            $lte: endOfDay,
+          };
+        }
 
         const result = await issuesCollection.find(query).toArray();
 
@@ -517,6 +534,7 @@ async function run() {
               $set: {
                 status: "staff-assigned",
                 assignedStaff: staffEmail,
+                assignedAt: new Date(),
               },
             },
             { returnDocument: "after" }
